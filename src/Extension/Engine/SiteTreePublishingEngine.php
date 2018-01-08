@@ -2,17 +2,12 @@
 
 namespace SilverStripe\StaticPublishQueue\Extension\Engine;
 
-use SilverStripe\Control\Director;
-use SilverStripe\Core\Config\Config;
+use SilverStripe\CMS\Model\SiteTreeExtension;
 use SilverStripe\Core\Environment;
-use SilverStripe\Core\Injector\Injector;
-use SilverStripe\ORM\DataExtension;
-use SilverStripe\ORM\DataObject;
 use SilverStripe\StaticPublishQueue\Contract\StaticPublishingTrigger;
 use SilverStripe\StaticPublishQueue\Extension\Publishable\PublishableSiteTree;
 use SilverStripe\StaticPublishQueue\Job\DeleteStaticCacheJob;
 use SilverStripe\StaticPublishQueue\Job\GenerateStaticCacheJob;
-use SilverStripe\StaticPublishQueue\Publisher\FilesystemPublisher;
 use Symbiote\QueuedJobs\Services\QueuedJobService;
 
 /**
@@ -24,7 +19,7 @@ use Symbiote\QueuedJobs\Services\QueuedJobService;
  *
  * @see PublishableSiteTree
  */
-class SiteTreePublishingEngine extends DataExtension
+class SiteTreePublishingEngine extends SiteTreeExtension
 {
     /**
      * Queues the urls to be flushed into the queue.
@@ -76,11 +71,25 @@ class SiteTreePublishingEngine extends DataExtension
         return $this;
     }
 
-    public function onAfterPublish()
+    /**
+     * @param \SilverStripe\CMS\Model\SiteTree|null $original
+     */
+    public function onAfterPublish(&$original)
     {
-        $context = array(
-            'action' => 'publish'
-        );
+        if ($original && (
+                $original->ParentID != $this->getOwner()->ParentID
+                || $original->URLSegment != $this->getOwner()->URLSegment
+            )
+        ) {
+            $context = [
+                'action' => 'unpublish',
+            ];
+            $original->collectChanges($context);
+            $original->flushChanges();
+        }
+        $context = [
+            'action' => 'publish',
+        ];
         $this->collectChanges($context);
         $this->flushChanges();
     }
@@ -126,7 +135,16 @@ class SiteTreePublishingEngine extends DataExtension
         if (!empty($this->toUpdate)) {
             foreach ($this->toUpdate as $queueItem) {
                 $job = new GenerateStaticCacheJob();
-                $job->setObject($queueItem);
+
+                $jobData = new \stdClass();
+                $urls = $queueItem->urlsToCache();
+                ksort($urls);
+                $jobData->URLsToProcess = $urls;
+
+                $job->setJobData(0, 0, false, $jobData, [
+                    'Building URLs: ' . var_export(array_keys($jobData->URLsToProcess), true)
+                ]);
+
                 $queue->queueJob($job);
             }
             $this->toUpdate = array();
@@ -135,52 +153,19 @@ class SiteTreePublishingEngine extends DataExtension
         if (!empty($this->toDelete)) {
             foreach ($this->toDelete as $queueItem) {
                 $job = new DeleteStaticCacheJob();
-                $job->setObject($queueItem);
+
+                $jobData = new \stdClass();
+                $urls = $queueItem->urlsToCache();
+                ksort($urls);
+                $jobData->URLsToProcess = $urls;
+
+                $job->setJobData(0, 0, false, $jobData, [
+                    'Purging URLs: ' . var_export(array_keys($jobData->URLsToProcess), true)
+                ]);
+
                 $queue->queueJob($job);
             }
             $this->toDelete = array();
-        }
-    }
-
-    /**
-     * Remove the stale variants of the cache files.
-     *
-     * @param array $paths List of paths relative to the cache root.
-     */
-    public function deleteStaleFiles($paths)
-    {
-        foreach ($paths as $path) {
-            // Delete the "stale" file.
-            $lastDot = strrpos($path, '.'); //find last dot
-            if ($lastDot !== false) {
-                $stalePath = substr($path, 0, $lastDot) . '.stale' . substr($path, $lastDot);
-                $this->owner->deleteFromCacheDir($stalePath);
-            }
-        }
-    }
-
-    /**
-     * Remove the cache files.
-     *
-     * @param array $paths List of paths relative to the cache root.
-     */
-    public function deleteRegularFiles($paths)
-    {
-        foreach ($paths as $path) {
-            $this->owner->deleteFromCacheDir($path);
-        }
-    }
-
-    /**
-     * Helper method for deleting existing files in the cache directory.
-     *
-     * @param string $path Path relative to the cache root.
-     */
-    public function deleteFromCacheDir($path)
-    {
-        $cacheBaseDir = $this->owner->getDestDir();
-        if (file_exists($cacheBaseDir . '/' . $path)) {
-            @unlink($cacheBaseDir . '/' . $path);
         }
     }
 }

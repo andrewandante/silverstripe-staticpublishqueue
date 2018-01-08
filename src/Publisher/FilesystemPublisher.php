@@ -63,6 +63,21 @@ class FilesystemPublisher extends Publisher
         return $this->fileExtension;
     }
 
+    public function purgeURL($url)
+    {
+        if (!$url) {
+            user_error("Bad url:" . var_export($url, true), E_USER_WARNING);
+            return;
+        }
+        $path = $this->URLtoPath($url);
+        $success = $this->deleteFromPath($path . '.html') && $this->deleteFromPath($path . '.php');
+        return [
+            'success' => $success,
+            'url' => $url,
+            'path' => $this->getDestPath() . DIRECTORY_SEPARATOR . $path,
+        ];
+    }
+
     /**
      * @param string $url
      * @return array A result array
@@ -144,6 +159,18 @@ class FilesystemPublisher extends Publisher
         return file_put_contents($publishPath, $content) !== false;
     }
 
+    protected function deleteFromPath($filePath)
+    {
+        $deletePath = $this->getDestPath() . DIRECTORY_SEPARATOR . $filePath;
+        if (file_exists($deletePath)) {
+            $success = unlink($deletePath);
+        } else {
+            $success = true;
+        }
+        Filesystem::remove_folder_if_empty(dirname($deletePath));
+        return $success;
+    }
+
     protected function URLtoPath($url)
     {
         // parse_url() is not multibyte safe, see https://bugs.php.net/bug.php?id=52923.
@@ -178,5 +205,48 @@ class FilesystemPublisher extends Publisher
             $prefix = $dirName . '/';
         }
         return $prefix . basename($filename);
+    }
+
+    protected function pathToURL($path)
+    {
+        if (strpos($path, $this->getDestPath()) === 0) {
+            //Strip off the full path of the cache dir from the front
+            $path = substr($path, strlen($this->getDestPath()));
+        }
+        $path = ltrim($path, '/');
+
+        if (strpos($path, $this->getDestFolder()) === 0) {
+            //Strip off the cache dir from the front
+            $path = substr($path, strlen($this->getDestFolder()));
+        }
+
+        // Strip off the file extension
+        $relativeURL = ltrim(substr($path, 0, (strrpos($path, "."))), '/');
+
+        return $relativeURL == 'index' ? '' : $relativeURL;
+    }
+
+    public function getPublishedURLs($dir = null, &$result = [])
+    {
+        if ($dir == null) {
+            $dir = $this->getDestPath();
+        }
+
+        $root = scandir($dir);
+        foreach ($root as $fileOrDir) {
+            if ($fileOrDir === '.' || $fileOrDir === '..') {
+                continue;
+            }
+            $fullPath = $dir . DIRECTORY_SEPARATOR . $fileOrDir;
+            if (is_file($fullPath)) {
+                $result[] = $this->pathToURL($fullPath);
+                continue;
+            }
+
+            if (is_dir($fullPath)) {
+                $this->getPublishedURLs($fullPath, $result);
+            }
+        }
+        return array_values(array_unique($result));
     }
 }
