@@ -6,8 +6,10 @@ use SilverStripe\Assets\Filesystem;
 use SilverStripe\CMS\Model\RedirectorPage;
 use SilverStripe\CMS\Model\SiteTree;
 use SilverStripe\Control\Director;
+use SilverStripe\Control\HTTPApplication;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\Dev\SapphireTest;
+use SilverStripe\Dev\TestKernel;
 use SilverStripe\StaticPublishQueue\Extension\Publishable\PublishableSiteTree;
 use SilverStripe\StaticPublishQueue\Publisher\FilesystemPublisher;
 use SilverStripe\StaticPublishQueue\Test\StaticPublisherTest\Model\StaticPublisherTestPage;
@@ -41,6 +43,18 @@ class FilesystemPublisherTest extends SapphireTest
         Config::modify()->set(FilesystemPublisher::class, 'domain_based_caching', false);
         Config::modify()->set(Director::class, 'alternate_base_url', 'http://foo/');
         Config::modify()->set(QueuedJobService::class, 'use_shutdown_function', false);
+
+        $mockFSP = $this->getMockBuilder(FilesystemPublisher::class)
+            ->setMethods(['getApp'])
+            ->getMock();
+        $mockFSP->setDestFolder('cache/testing/');
+        $mockFSP->method('getApp')->willReturnCallback(function () {
+            $kernel = new TestKernel(BASE_PATH);
+            $app = new HTTPApplication($kernel);
+            return $app;
+        });
+
+        $this->fsp = $mockFSP;
     }
 
     protected function tearDown()
@@ -56,8 +70,6 @@ class FilesystemPublisherTest extends SapphireTest
         $reflection = new \ReflectionClass(FilesystemPublisher::class);
         $urlToPath = $reflection->getMethod('URLtoPath');
         $urlToPath->setAccessible(true);
-
-        $this->fsp = FilesystemPublisher::create();
 
         $this->assertEquals(
             'index',
@@ -80,8 +92,6 @@ class FilesystemPublisherTest extends SapphireTest
         $reflection = new \ReflectionClass(FilesystemPublisher::class);
         $urlToPath = $reflection->getMethod('URLtoPath');
         $urlToPath->setAccessible(true);
-
-        $this->fsp = FilesystemPublisher::create();
 
         $url = Director::absoluteBaseUrl();
         $this->assertEquals(
@@ -110,7 +120,7 @@ class FilesystemPublisherTest extends SapphireTest
         $urlToPath = $reflection->getMethod('URLtoPath');
         $urlToPath->setAccessible(true);
 
-        $this->fsp = FilesystemPublisher::create()->setFileExtension('html');
+        $this->fsp->setFileExtension('html');
 
         $url = 'http://domain1.com/';
         $this->assertEquals(
@@ -133,16 +143,11 @@ class FilesystemPublisherTest extends SapphireTest
 
     public function testMenu2LinkingMode()
     {
-        $this->logInWithPermission('ADMIN');
-
         SSViewer::set_themes(null);
 
         $reflection = new \ReflectionClass(FilesystemPublisher::class);
         $urlToPath = $reflection->getMethod('URLtoPath');
         $urlToPath->setAccessible(true);
-
-        $this->fsp = FilesystemPublisher::create()
-            ->setDestFolder('cache/testing/');
 
         $level1 = StaticPublisherTestPage::create();
         $level1->URLSegment = 'test-level-1';
@@ -157,13 +162,13 @@ class FilesystemPublisherTest extends SapphireTest
 
         $this->fsp->publishURL($level1->Link(), true);
         $this->fsp->publishURL($level2_1->Link(), true);
-        $static2_1FilePath = $this->fsp->getDestPath().$urlToPath->invokeArgs($this->fsp, [$level2_1->Link()]);
+        $static2_1FilePath = $this->fsp->getDestPath() . $urlToPath->invokeArgs($this->fsp, [$level2_1->Link()]);
 
-        $this->assertFileExists($static2_1FilePath.'.html');
-        $this->assertFileExists($static2_1FilePath.'.php');
+        $this->assertFileExists($static2_1FilePath . '.html');
+        $this->assertFileExists($static2_1FilePath . '.php');
         $this->assertContains(
             'current',
-            file_get_contents($static2_1FilePath.'.html')
+            file_get_contents($static2_1FilePath . '.html')
         );
 
         $level2_2 = StaticPublisherTestPage::create();
@@ -173,88 +178,74 @@ class FilesystemPublisherTest extends SapphireTest
         $level2_2->publishRecursive();
 
         $this->fsp->publishURL($level2_2->Link(), true);
-        $static2_2FilePath = $this->fsp->getDestPath().$urlToPath->invokeArgs($this->fsp, [$level2_2->Link()]);
+        $static2_2FilePath = $this->fsp->getDestPath() . $urlToPath->invokeArgs($this->fsp, [$level2_2->Link()]);
 
-        $this->assertFileExists($static2_2FilePath.'.html');
-        $this->assertFileExists($static2_2FilePath.'.php');
+        $this->assertFileExists($static2_2FilePath . '.html');
+        $this->assertFileExists($static2_2FilePath . '.php');
         $this->assertContains(
             'linkcurrent',
-            file_get_contents($static2_2FilePath.'.html')
+            file_get_contents($static2_2FilePath . '.html')
         );
     }
 
     public function testOnlyHTML()
     {
-        $this->logInWithPermission('ADMIN');
+        $this->fsp->setFileExtension('html');
 
-        $this->fsp = FilesystemPublisher::create()
-            ->setFileExtension('html')
-            ->setDestFolder('cache/testing/');
         $level1 = StaticPublisherTestPage::create();
         $level1->URLSegment = 'mimetype';
         $level1->write();
         $level1->publishRecursive();
 
         $this->fsp->publishURL($level1->Link(), true);
-        $staticFilePath = $this->fsp->getDestPath().'mimetype';
+        $staticFilePath = $this->fsp->getDestPath() . 'mimetype';
 
-        $this->assertFileExists($staticFilePath.'.html');
-        $this->assertFileNotExists($staticFilePath.'.php');
+        $this->assertFileExists($staticFilePath . '.html');
+        $this->assertFileNotExists($staticFilePath . '.php');
         $this->assertEquals(
             "<div class=\"statically-published\" style=\"display: none\"></div>",
-            trim(file_get_contents($staticFilePath.'.html'))
+            trim(file_get_contents($staticFilePath . '.html'))
         );
     }
 
     public function testPurgeURL()
     {
-        $this->logInWithPermission('ADMIN');
-
-        $this->fsp = FilesystemPublisher::create()
-            ->setDestFolder('cache/testing/');
         $level1 = StaticPublisherTestPage::create();
         $level1->URLSegment = 'to-be-purged';
         $level1->write();
         $level1->publishRecursive();
 
         $this->fsp->publishURL('to-be-purged', true);
-        $this->assertFileExists($this->fsp->getDestPath().'to-be-purged.html');
-        $this->assertFileExists($this->fsp->getDestPath().'to-be-purged.php');
+        $this->assertFileExists($this->fsp->getDestPath() . 'to-be-purged.html');
+        $this->assertFileExists($this->fsp->getDestPath() . 'to-be-purged.php');
 
         $this->fsp->purgeURL('to-be-purged');
-        $this->assertFileNotExists($this->fsp->getDestPath().'to-be-purged.html');
-        $this->assertFileNotExists($this->fsp->getDestPath().'to-be-purged.php');
+        $this->assertFileNotExists($this->fsp->getDestPath() . 'to-be-purged.html');
+        $this->assertFileNotExists($this->fsp->getDestPath() . 'to-be-purged.php');
     }
 
     public function testPurgeURLAfterSwitchingExtensions()
     {
-        $this->logInWithPermission('ADMIN');
-
-        $this->fsp = FilesystemPublisher::create()
-            ->setDestFolder('cache/testing/');
         $level1 = StaticPublisherTestPage::create();
         $level1->URLSegment = 'purge-me';
         $level1->write();
         $level1->publishRecursive();
 
         $this->fsp->publishURL('purge-me', true);
-        $this->assertFileExists($this->fsp->getDestPath().'purge-me.html');
-        $this->assertFileExists($this->fsp->getDestPath().'purge-me.php');
+        $this->assertFileExists($this->fsp->getDestPath() . 'purge-me.html');
+        $this->assertFileExists($this->fsp->getDestPath() . 'purge-me.php');
 
         $this->fsp->setFileExtension('html');
 
         $this->fsp->purgeURL('purge-me');
-        $this->assertFileNotExists($this->fsp->getDestPath().'purge-me.html');
-        $this->assertFileNotExists($this->fsp->getDestPath().'purge-me.php');
+        $this->assertFileNotExists($this->fsp->getDestPath() . 'purge-me.html');
+        $this->assertFileNotExists($this->fsp->getDestPath() . 'purge-me.php');
     }
 
     public function testNoErrorPagesWhenHTMLOnly()
     {
-        $this->logInWithPermission('ADMIN');
+        $this->fsp->setFileExtension('html');
 
-        $this->fsp = FilesystemPublisher::create()
-            ->setFileExtension('html')
-            ->setDestFolder('cache/testing/');
         $this->fsp->publishURL('not_really_there', true);
         $this->assertFileNotExists($this->fsp->getDestPath() . 'not_really_there.html');
         $this->assertFileNotExists($this->fsp->getDestPath() . 'not_really_there.php');
@@ -262,10 +253,6 @@ class FilesystemPublisherTest extends SapphireTest
 
     public function testErrorPageWhenPHP()
     {
-        $this->logInWithPermission('ADMIN');
-
-        $this->fsp = FilesystemPublisher::create()
-            ->setDestFolder('cache/testing/');
         $this->fsp->publishURL('not_really_there', true);
         $this->assertFileExists($this->fsp->getDestPath() . 'not_really_there.html');
         $this->assertFileExists($this->fsp->getDestPath() . 'not_really_there.php');
@@ -275,10 +262,6 @@ class FilesystemPublisherTest extends SapphireTest
 
     public function testRedirectorPageWhenPHP()
     {
-        $this->logInWithPermission('ADMIN');
-
-        $this->fsp = FilesystemPublisher::create()
-            ->setDestFolder('cache/testing/');
         $redirectorPage = RedirectorPage::create();
         $redirectorPage->URLSegment = 'somewhere-else';
         $redirectorPage->RedirectionType = 'External';
@@ -301,11 +284,7 @@ class FilesystemPublisherTest extends SapphireTest
 
     public function testRedirectorPageWhenHTMLOnly()
     {
-        $this->logInWithPermission('ADMIN');
-
-        $this->fsp = FilesystemPublisher::create()
-            ->setFileExtension('html')
-            ->setDestFolder('cache/testing/');
+        $this->fsp->setFileExtension('html');
 
         $redirectorPage = RedirectorPage::create();
         $redirectorPage->URLSegment = 'somewhere-else';
@@ -330,21 +309,9 @@ class FilesystemPublisherTest extends SapphireTest
         $pathToURL = $reflection->getMethod('pathToURL');
         $pathToURL->setAccessible(true);
 
-        $this->fsp = FilesystemPublisher::create();
-
         $this->assertEquals(
-            '',
+            '/',
             $pathToURL->invokeArgs($this->fsp, ['index.html'])
-        );
-
-        $this->assertEquals(
-            '',
-            $pathToURL->invokeArgs($this->fsp, ['cache/index.html'])
-        );
-
-        $this->assertEquals(
-            '',
-            $pathToURL->invokeArgs($this->fsp, ['/cache/index.html'])
         );
 
         $this->assertEquals(
@@ -361,19 +328,10 @@ class FilesystemPublisherTest extends SapphireTest
             'parent/child',
             $pathToURL->invokeArgs($this->fsp, ['parent/child.html'])
         );
-
-        $this->assertEquals(
-            'parent/child',
-            $pathToURL->invokeArgs($this->fsp, ['cache/parent/child.php'])
-        );
     }
 
     public function testGetPublishedURLs()
     {
-        $this->logInWithPermission('ADMIN');
-
-        $this->fsp = FilesystemPublisher::create()
-            ->setDestFolder('cache/testing/');
         $level1 = StaticPublisherTestPage::create();
         $level1->URLSegment = 'find-me';
         $level1->write();

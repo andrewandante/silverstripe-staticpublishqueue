@@ -5,8 +5,10 @@ namespace SilverStripe\StaticPublishQueue\Publisher;
 use SilverStripe\Assets\Filesystem;
 use SilverStripe\Control\Director;
 use SilverStripe\Control\HTTP;
+use SilverStripe\Control\HTTPApplication;
 use SilverStripe\Control\HTTPResponse;
 use SilverStripe\Core\Convert;
+use SilverStripe\Core\CoreKernel;
 use SilverStripe\ORM\FieldType\DBDatetime;
 use SilverStripe\StaticPublishQueue\Publisher;
 
@@ -214,16 +216,10 @@ class FilesystemPublisher extends Publisher
             $path = substr($path, strlen($this->getDestPath()));
         }
         $path = ltrim($path, '/');
-
-        if (strpos($path, $this->getDestFolder()) === 0) {
-            //Strip off the cache dir from the front
-            $path = substr($path, strlen($this->getDestFolder()));
-        }
-
         // Strip off the file extension
-        $relativeURL = ltrim(substr($path, 0, (strrpos($path, "."))), '/');
+        $relativeURL = substr($path, 0, (strrpos($path, ".")));
 
-        return $relativeURL == 'index' ? '' : $relativeURL;
+        return $relativeURL == 'index' ? '/' : $relativeURL;
     }
 
     public function getPublishedURLs($dir = null, &$result = [])
@@ -234,11 +230,12 @@ class FilesystemPublisher extends Publisher
 
         $root = scandir($dir);
         foreach ($root as $fileOrDir) {
-            if ($fileOrDir === '.' || $fileOrDir === '..') {
+            if (strpos($fileOrDir, '.') === 0) {
                 continue;
             }
             $fullPath = $dir . DIRECTORY_SEPARATOR . $fileOrDir;
-            if (is_file($fullPath)) {
+            // we know html will always be generated, this prevents double ups
+            if (is_file($fullPath) && pathinfo($fullPath)['extension'] == 'html') {
                 $result[] = $this->pathToURL($fullPath);
                 continue;
             }
@@ -247,6 +244,6 @@ class FilesystemPublisher extends Publisher
                 $this->getPublishedURLs($fullPath, $result);
             }
         }
-        return array_values(array_unique($result));
+        return $result;
     }
 }
